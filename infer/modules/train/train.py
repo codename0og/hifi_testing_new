@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 
 now_dir = os.getcwd()
 sys.path.append(os.path.join(now_dir))
-
+sys.path.append(os.path.join(now_dir, "train"))
 import datetime
 
 from infer.lib.train import utils
@@ -15,8 +15,7 @@ hps = utils.get_hparams()
 os.environ["CUDA_VISIBLE_DEVICES"] = hps.gpus.replace("-", ",")
 n_gpus = len(hps.gpus.split("-"))
 from random import randint, shuffle
-
-import torch
+import torch, traceback, json, argparse, itertools, math, pdb
 
 try:
     import intel_extension_for_pytorch as ipex  # pylint: disable=import-error, unused-import
@@ -54,6 +53,8 @@ from infer.lib.train.data_utils import (
     TextAudioLoaderMultiNSFsid,
 )
 
+import csv
+
 if hps.version == "v1":
     from infer.lib.infer_pack.models import MultiPeriodDiscriminator
     from infer.lib.infer_pack.models import SynthesizerTrnMs256NSFsid as RVC_Model_f0
@@ -77,6 +78,24 @@ from infer.lib.train.mel_processing import mel_spectrogram_torch, spec_to_mel_to
 from infer.lib.train.process_ckpt import savee
 
 global_step = 0
+
+        # Codename;0's tweak / feature
+def mel_spectrogram_similarity(y_hat_mel, y_mel):
+    # Calculate the L1 loss between the generated mel and original mel spectrograms
+    loss_mel = F.l1_loss(y_hat_mel, y_mel)
+
+    # Convert the L1 loss to a similarity score between 0 and 100
+    # Scale the loss to a percentage, where a perfect match (0 loss) gives 100% similarity
+    similarity_percentage = 100.0 - (loss_mel.item() * 100.0)
+
+    # Convert the similarity percentage to a tensor
+    similarity_percentage = torch.tensor(similarity_percentage)
+
+    # Clip the similarity percentage to ensure it stays within the desired range
+    similarity_percentage = torch.clamp(similarity_percentage, min=0.0, max=100.0)
+
+    return similarity_percentage
+
 
 
 class EpochRecorder:
@@ -104,10 +123,11 @@ def main():
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = str(randint(20000, 55555))
     children = []
+    logger = utils.get_logger(hps.model_dir)
     for i in range(n_gpus):
         subproc = mp.Process(
             target=run,
-            args=(i, n_gpus, hps),
+            args=(i, n_gpus, hps, logger),
         )
         children.append(subproc)
         subproc.start()
@@ -116,14 +136,10 @@ def main():
         children[i].join()
 
 
-def run(
-    rank,
-    n_gpus,
-    hps,
-):
+def run(rank, n_gpus, hps, logger: logging.Logger):
     global global_step
     if rank == 0:
-        logger = utils.get_logger(hps.model_dir)
+        # logger = utils.get_logger(hps.model_dir)
         logger.info(hps)
         # utils.check_git_hash(hps.model_dir)
         writer = SummaryWriter(log_dir=hps.model_dir)
@@ -398,6 +414,7 @@ def train_and_evaluate(
 
     # Run steps
     epoch_recorder = EpochRecorder()
+
     for batch_idx, info in data_iterator:
         # Data
         ## Unpack
@@ -520,6 +537,16 @@ def train_and_evaluate(
                 logger.info(
                     f"loss_disc={loss_disc:.3f}, loss_gen={loss_gen:.3f}, loss_fm={loss_fm:.3f},loss_mel={loss_mel:.3f}, loss_kl={loss_kl:.3f}"
                 )
+                    # Codename;0's tweak / feature
+                # Calculate the mel spectrogram similarity
+                similarity_percentage = mel_spectrogram_similarity(y_hat_mel, y_mel)
+                
+                # Print the similarity percentage to monitor during training
+                print(f'Mel Spectrogram Similarity: {similarity_percentage:.2f}%')
+                
+                # Logging the similarity percentage to TensorBoard
+                writer.add_scalar('Metric/Mel_Spectrogram_Similarity', similarity_percentage, global_step)
+                
                 scalar_dict = {
                     "loss/g/total": loss_gen_all,
                     "loss/d/total": loss_disc,
@@ -617,6 +644,48 @@ def train_and_evaluate(
                 )
             )
 
+    try:
+        with open("csvdb/stop.csv") as CSVStop:
+            csv_reader = list(csv.reader(CSVStop))
+            stopbtn = (
+                csv_reader[0][0]
+                if csv_reader is not None
+                else (lambda: exec('raise ValueError("No data")'))()
+            )
+            stopbtn = (
+                lambda stopbtn: True
+                if stopbtn.lower() == "true"
+                else (False if stopbtn.lower() == "false" else stopbtn)
+            )(stopbtn)
+    except (ValueError, TypeError, IndexError):
+        stopbtn = False
+
+    if stopbtn:
+        logger.info("Stop Button was pressed. The program is closed.")
+        if hasattr(net_g, "module"):
+            ckpt = net_g.module.state_dict()
+        else:
+            ckpt = net_g.state_dict()
+        logger.info(
+            "saving final ckpt:%s"
+            % (
+                savee(
+                    ckpt,
+                    hps.sample_rate,
+                    hps.if_f0,
+                    hps.name,
+                    epoch,
+                    hps.version,
+                    hps,
+                )
+            )
+        )
+        sleep(1)
+        with open("csvdb/stop.csv", "w+", newline="") as STOPCSVwrite:
+            csv_writer = csv.writer(STOPCSVwrite, delimiter=",")
+            csv_writer.writerow(["False"])
+        os._exit(2333333)
+
     if rank == 0:
         logger.info("====> Epoch: {} {}".format(epoch, epoch_recorder.record()))
     if epoch >= hps.total_epoch and rank == 0:
@@ -635,6 +704,9 @@ def train_and_evaluate(
             )
         )
         sleep(1)
+        with open("csvdb/stop.csv", "w+", newline="") as STOPCSVwrite:
+            csv_writer = csv.writer(STOPCSVwrite, delimiter=",")
+            csv_writer.writerow(["False"])
         os._exit(2333333)
 
 
