@@ -39,7 +39,6 @@ def cache_harvest_f0(input_audio_path, fs, f0max, f0min, frame_period):
     f0 = pyworld.stonemask(audio, f0, t, fs)
     return f0
 
-
 def change_rms(data1, sr1, data2, sr2, rate):  # 1是输入音频，2是输出音频,rate是2的占比
     # print(data1.max(),data2.max())
     rms1 = librosa.feature.rms(
@@ -81,14 +80,108 @@ class Pipeline(object):
         self.t_max = self.sr * self.x_max  # 免查询时长阈值
         self.device = config.device
 
+
+        # Ported from Mangio's RVC fork
+    # Fork Feature: Get the best torch device to use for f0 algorithms that require a torch device. Will return the type (torch.device)
+    def get_optimal_torch_device(self, index: int = 0) -> torch.device:
+        # Get cuda device
+        if torch.cuda.is_available():
+            return torch.device(
+                f"cuda:{index % torch.cuda.device_count()}"
+            )  # Very fast
+        elif torch.backends.mps.is_available():
+            return torch.device("mps")
+        # Insert an else here to grab "xla" devices if available. TO DO later. Requires the torch_xla.core.xla_model library
+        # Else wise return the "cpu" as a torch device,
+        return torch.device("cpu")
+        
+        
+        
+        # Ported from Mangio's RVC fork
+    # Fork Feature: Compute f0 with the crepe method
+    def get_f0_crepe_computation(
+        self,
+        x,
+        f0_min,
+        f0_max,
+        p_len,
+        hop_length=160,  # 512 before. Hop length changes the speed that the voice jumps to a different dramatic pitch. Lower hop lengths means more pitch accuracy but longer inference time.
+        model="full",  # Either use crepe-tiny "tiny" or crepe "full". Default is full
+    ):
+        x = x.astype(
+            np.float32
+        )  # fixes the F.conv2D exception. We needed to convert double to float.
+        x /= np.quantile(np.abs(x), 0.999)
+        torch_device = self.get_optimal_torch_device()
+        audio = torch.from_numpy(x).to(torch_device, copy=True)
+        audio = torch.unsqueeze(audio, dim=0)
+        if audio.ndim == 2 and audio.shape[0] > 1:
+            audio = torch.mean(audio, dim=0, keepdim=True).detach()
+        audio = audio.detach()
+        print("Initiating prediction with a crepe_hop_length of: " + str(hop_length))
+        pitch: Tensor = torchcrepe.predict(
+            audio,
+            self.sr,
+            hop_length,
+            f0_min,
+            f0_max,
+            model,
+            batch_size=hop_length * 2,
+            device=torch_device,
+            pad=True,
+        )
+        p_len = p_len or x.shape[0] // hop_length
+        # Resize the pitch for final f0
+        source = np.array(pitch.squeeze(0).cpu().float().numpy())
+        source[source < 0.001] = np.nan
+        target = np.interp(
+            np.arange(0, len(source) * p_len, len(source)) / p_len,
+            np.arange(0, len(source)),
+            source,
+        )
+        f0 = np.nan_to_num(target)
+        return f0  # Resized f0
+        
+        # Ported from Mangio's RVC fork
+    def get_f0_official_crepe_computation(
+        self,
+        x,
+        f0_min,
+        f0_max,
+        model="full",
+    ):
+        # Pick a batch size that doesn't cause memory errors on your gpu
+        batch_size = 512
+        # Compute pitch using first gpu
+        audio = torch.tensor(np.copy(x))[None].float()
+        f0, pd = torchcrepe.predict(
+            audio,
+            self.sr,
+            self.window,
+            f0_min,
+            f0_max,
+            model,
+            batch_size=batch_size,
+            device=self.device,
+            return_periodicity=True,
+        )
+        pd = torchcrepe.filter.median(pd, 3)
+        f0 = torchcrepe.filter.mean(f0, 3)
+        f0[pd < 0.1] = 0
+        f0 = f0[0].cpu().numpy()
+        return f0
+
+
     def get_f0(
         self,
-        input_audio_path,
+        input_audio_path0,
+        input_audio_path1,
         x,
         p_len,
         f0_up_key,
         f0_method,
         filter_radius,
+        crepe_hop_length,
         inp_f0=None,
     ):
         global input_audio_path2wav
@@ -152,6 +245,15 @@ class Pipeline(object):
                     device=self.device,
                 )
             f0 = self.model_rmvpe.infer_from_audio(x, thred=0.03)
+        
+        elif f0_method == "mangio-crepe":
+            f0 = self.get_f0_crepe_computation(
+                x, f0_min, f0_max, p_len, crepe_hop_length
+            )
+        elif f0_method == "mangio-crepe-tiny":
+            f0 = self.get_f0_crepe_computation(
+                x, f0_min, f0_max, p_len, crepe_hop_length, "tiny"
+            )
 
             if "privateuseone" in str(self.device):  # clean ortruntime memory
                 del self.model_rmvpe.model
@@ -284,7 +386,8 @@ class Pipeline(object):
         net_g,
         sid,
         audio,
-        input_audio_path,
+        input_audio_path0,
+        input_audio_path1,
         times,
         f0_up_key,
         f0_method,
@@ -297,6 +400,7 @@ class Pipeline(object):
         rms_mix_rate,
         version,
         protect,
+        crepe_hop_length, # port
         f0_file=None,
     ):
         if (
@@ -352,12 +456,14 @@ class Pipeline(object):
         pitch, pitchf = None, None
         if if_f0 == 1:
             pitch, pitchf = self.get_f0(
-                input_audio_path,
+                input_audio_path0,
+                input_audio_path1,
                 audio_pad,
                 p_len,
                 f0_up_key,
                 f0_method,
                 filter_radius,
+                crepe_hop_length,
                 inp_f0,
             )
             pitch = pitch[:p_len]
