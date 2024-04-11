@@ -31,7 +31,7 @@ def printt(strr):
 
 
 class FeatureInput(object):
-    def __init__(self, samplerate=16000, hop_size=64):
+    def __init__(self, samplerate=16000, hop_size=160):
         self.fs = samplerate
         self.hop = hop_size
 
@@ -43,10 +43,7 @@ class FeatureInput(object):
 
     def compute_f0(self, path, f0_method):
         x = load_audio(path, self.fs)
-        
         # p_len = x.shape[0] // self.hop
-        p_len = x.shape[0] // self.hop
-        
         if f0_method == "rmvpe":
             if hasattr(self, "model_rmvpe") == False:
                 from infer.lib.rmvpe import RMVPE
