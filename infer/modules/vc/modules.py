@@ -8,7 +8,7 @@ import soundfile as sf
 import torch
 from io import BytesIO
 
-from infer.lib.my_utils import load_audio, CSVutil
+from infer.lib.audio import load_audio, wav2
 from infer.lib.infer_pack.models import (
     SynthesizerTrnMs256NSFsid,
     SynthesizerTrnMs256NSFsid_nono,
@@ -17,31 +17,6 @@ from infer.lib.infer_pack.models import (
 )
 from infer.modules.vc.pipeline import Pipeline
 from infer.modules.vc.utils import *
-
-
-
-# Mangio port's feature; formant support
-import csv
-
-if not os.path.isdir("csvdb/"):
-    os.makedirs("csvdb")
-    frmnt, stp = open("csvdb/formanting.csv", "w"), open("csvdb/stop.csv", "w")
-    frmnt.close()
-    stp.close()
-
-global DoFormant, Quefrency, Timbre
-
-try:
-    DoFormant, Quefrency, Timbre = CSVutil("csvdb/formanting.csv", "r", "formanting")
-    DoFormant = (
-        lambda DoFormant: True
-        if DoFormant.lower() == "true"
-        else (False if DoFormant.lower() == "false" else DoFormant)
-    )(DoFormant)
-except (ValueError, TypeError, IndexError):
-    DoFormant, Quefrency, Timbre = False, 1.0, 1.0
-    CSVutil("csvdb/formanting.csv", "w+", "formanting", DoFormant, Quefrency, Timbre)
-    
 
 
 class VC:
@@ -188,9 +163,9 @@ class VC:
         f0_up_key = int(f0_up_key)
         try:
             if input_audio_path0:
-                audio = load_audio(input_audio_path0, 16000, DoFormant, Quefrency, Timbre)
+                audio = load_audio(input_audio_path0, 16000)
             else:
-                audio = load_audio(input_audio_path1, 16000, DoFormant, Quefrency, Timbre)
+                audio = load_audio(input_audio_path1, 16000)
             audio_max = np.abs(audio).max() / 0.95
             if audio_max > 1:
                 audio /= audio_max
