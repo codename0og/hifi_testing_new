@@ -33,7 +33,7 @@ import shutil
 import logging
 import signal
 # tweaked - Added: CSVutil
-from infer.lib.audio import load_audio
+from infer.lib.my_utils import load_audio
 
 logging.getLogger("numba").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
