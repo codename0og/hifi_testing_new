@@ -27,8 +27,8 @@ input_audio_path2wav = {}
 
 
 @lru_cache
-def cache_harvest_f0(input_audio_path, fs, f0max, f0min, frame_period):
-    audio = input_audio_path2wav[input_audio_path]
+def cache_harvest_f0(input_audio_path0, input_audio_path1, fs, f0max, f0min, frame_period):
+    audio = input_audio_path2wav[input_audio_path0, input_audio_path1]
     f0, t = pyworld.harvest(
         audio,
         fs=fs,
@@ -207,8 +207,8 @@ class Pipeline(object):
                     f0, [[pad_size, p_len - len(f0) - pad_size]], mode="constant"
                 )
         elif f0_method == "harvest":
-            input_audio_path2wav[input_audio_path] = x.astype(np.double)
-            f0 = cache_harvest_f0(input_audio_path, self.sr, f0_max, f0_min, 10)
+            input_audio_path2wav[input_audio_path0, input_audio_path1] = x.astype(np.double)
+            f0 = cache_harvest_f0(input_audio_path0, input_audio_path1, self.sr, f0_max, f0_min, 10)
             if filter_radius > 2:
                 f0 = signal.medfilt(f0, 3)
         elif f0_method == "crepe":
