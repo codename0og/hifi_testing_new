@@ -13,6 +13,8 @@ n_p = int(sys.argv[3])
 exp_dir = sys.argv[4]
 noparallel = sys.argv[5] == "True"
 per = float(sys.argv[6])
+sr_trgt = sr
+
 import os
 import traceback
 
@@ -20,7 +22,7 @@ import librosa
 import numpy as np
 from scipy.io import wavfile
 
-from infer.lib.my_utils import load_audio
+from infer.lib.audio import load_audio
 from infer.lib.slicer2 import Slicer
 
 f = open("%s/preprocess.log" % exp_dir, "a+")
@@ -33,7 +35,7 @@ def println(strr):
 
 
 class PreProcess:
-    def __init__(self, sr, exp_dir, per=3.7):
+    def __init__(self, sr, sr_trgt, exp_dir, per=3.7):
         self.slicer = Slicer(
             sr=sr,
             threshold=-42,
@@ -55,11 +57,12 @@ class PreProcess:
         os.makedirs(self.exp_dir, exist_ok=True)
         os.makedirs(self.gt_wavs_dir, exist_ok=True)
         os.makedirs(self.wavs16k_dir, exist_ok=True)
+        self.sr_trgt = sr_trgt
 
-    # Enveloping of the segments
+    # Enveloping of the 0_gt segments
     def apply_envelope(self, audio):
         fade_duration = 0.005  # 8ms fade in/out duration
-        fade_samples = int(fade_duration * self.sr)
+        fade_samples = int(fade_duration * self.sr_trgt)
         envelope = np.concatenate([
             np.linspace(0, 1, fade_samples),
             np.ones(len(audio) - 2 * fade_samples),
@@ -67,11 +70,29 @@ class PreProcess:
         ])
         return audio * envelope
 
+    # Enveloping of the 16k segments
+    def apply_envelope_16k(self, audio):
+        fade_duration = 0.005  # 8ms fade in/out duration
+        fade_samples = int(fade_duration * 16000)
+        envelope = np.concatenate([
+            np.linspace(0, 1, fade_samples),
+            np.ones(len(audio) - 2 * fade_samples),
+            np.linspace(1, 0, fade_samples)
+        ])
+        return audio * envelope
+
+
     def norm_write(self, tmp_audio, idx0, idx1):
         tmp_max = np.abs(tmp_audio).max()
         if tmp_max > 2.5:
             print("%s-%s-%s-filtered" % (idx0, idx1, tmp_max))
             return
+
+
+        # Resample 0_gt -> target samplerate - EXPERIMENTAL SoXr use
+        tmp_audio = librosa.resample(
+            tmp_audio, orig_sr=self.sr, target_sr=self.sr_trgt, res_type='soxr_vhq'
+        )
 
         # Normalization step ( applies to both 16k and 0_gt ) 
         tmp_audio = (tmp_audio / tmp_max * (self.max * self.alpha)) + (
@@ -84,19 +105,19 @@ class PreProcess:
         # Save normalized samples to 0_gt wavs folder as 32 bit float
         wavfile.write(
             "%s/%s_%s.wav" % (self.gt_wavs_dir, idx0, idx1),
-            self.sr,
+            self.sr_trgt,
             tmp_audio.astype(np.float32),
         )
 
 
-        # Resample 0_gt -> 16khz ones
+        # Resample 0_gt -> 16khz ones - EXPERIMENTAL SoXr use
         tmp_audio = librosa.resample(
-            tmp_audio, orig_sr=self.sr, target_sr=16000
+            tmp_audio, orig_sr=self.sr, target_sr=16000, res_type='soxr_vhq'
         )
 
 
         # Apply envelope for 16k samples
-        tmp_audio = self.apply_envelope(tmp_audio)
+        tmp_audio = self.apply_envelope_16k(tmp_audio)
 
         # Save normalized and resampled ( to 16khz ) samples to 16k wavs folder as 32 bit float
         wavfile.write(
@@ -107,7 +128,7 @@ class PreProcess:
 
     def pipeline(self, path, idx0):
         try:
-            audio = load_audio(path, self.sr)
+            audio = load_audio(path, self.sr_trgt)
             # zero phased digital filter cause pre-ringing noise...
             # audio = signal.filtfilt(self.bh, self.ah, audio)
             audio = signal.lfilter(self.bh, self.ah, audio)
@@ -116,10 +137,10 @@ class PreProcess:
             for audio in self.slicer.slice(audio):
                 i = 0
                 while 1:
-                    start = int(self.sr * (self.per - self.overlap) * i)
+                    start = int(self.sr_trgt * (self.per - self.overlap) * i)
                     i += 1
-                    if len(audio[start:]) > self.tail * self.sr:
-                        tmp_audio = audio[start : start + int(self.per * self.sr)]
+                    if len(audio[start:]) > self.tail * self.sr_trgt:
+                        tmp_audio = audio[start : start + int(self.per * self.sr_trgt)]
                         self.norm_write(tmp_audio, idx0, idx1)
                         idx1 += 1
                     else:
@@ -159,7 +180,7 @@ class PreProcess:
 
 
 def preprocess_trainset(inp_root, sr, n_p, exp_dir, per):
-    pp = PreProcess(sr, exp_dir, per)
+    pp = PreProcess(sr, sr_trgt, exp_dir, per)
     println("Starting preprocessing")
     pp.pipeline_mp_inp_dir(inp_root, n_p)
     println("Preprocessing finished")
