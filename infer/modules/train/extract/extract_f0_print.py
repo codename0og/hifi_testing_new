@@ -2,7 +2,7 @@ import os, traceback, sys, parselmouth
 
 now_dir = os.getcwd()
 sys.path.append(now_dir)
-from infer.lib.my_utils import load_audio
+from infer.lib.audio import load_audio
 import pyworld
 import numpy as np, logging
 import torchcrepe  # Fork Feature. Crepe algo for training and preprocess
@@ -17,10 +17,6 @@ from multiprocessing import Process
 exp_dir = sys.argv[1]
 f = open("%s/extract_f0_feature.log" % exp_dir, "a+")
 
-DoFormant = False
-
-Quefrency = 0.0
-Timbre = 0.0
 
 def printt(strr):
     print(strr)
