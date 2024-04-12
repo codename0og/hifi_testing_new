@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 class STFT(torch.nn.Module):
     def __init__(
-        self, filter_length=1024, hop_length=512, win_length=None, window="hann"
+        self, filter_length=128, hop_length=64, win_length=None, window="hann"
     ):
         """
         This module implements an STFT using 1D convolution and 1D transpose convolutions.
