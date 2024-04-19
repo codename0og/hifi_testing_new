@@ -67,31 +67,7 @@ def load_audio(file, sr):
         audio = file[1] / 32768.0
         if len(audio.shape) == 2:
             audio = np.mean(audio, -1)
-        return librosa.resample(audio, orig_sr=file[0], target_sr=16000, res_type='soxr_vhq')
+        return librosa.resample(audio, orig_sr=file[0], target_sr=16000)
 
     except:
         raise RuntimeError(traceback.format_exc())
-
-
-# Alternative / fallback to "my_utils" approach ( Instead of Librosa and AV, uses ffmpeg. )
-
-
-#import sys
-#import ffmpeg
-#import numpy as np
-#import os
-
-#def load_audio(file, sr):
-#    try:
-#        file = file.strip().strip('"').strip("\n")
-#        out, _ = (
-#            ffmpeg.input(file, threads=0)
-#            .output("-", format="f32le", acodec="pcm_f32le", ac=1, ar=sr)
-#            .run(
-#                cmd=["ffmpeg", "-nostdin"], capture_stdout=True, capture_stderr=True
-#            )
-#        )
-#    except Exception as e:
-#        raise RuntimeError(f"Failed to load audio: {e}")
-
-#    return np.frombuffer(out, np.float32).flatten()
