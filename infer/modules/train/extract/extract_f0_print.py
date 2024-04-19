@@ -2,7 +2,7 @@ import os, traceback, sys, parselmouth
 
 now_dir = os.getcwd()
 sys.path.append(now_dir)
-from infer.lib.audio import load_audio
+from infer.lib.my_utils import load_audio
 import pyworld
 import numpy as np, logging
 import torchcrepe  # Fork Feature. Crepe algo for training and preprocess
@@ -203,7 +203,7 @@ class FeatureInput(object):
         return f0_median_hybrid
 
     def compute_f0(self, path, f0_method, crepe_hop_length):
-        x = load_audio(path, self.fs, DoFormant, Quefrency, Timbre)
+        x = load_audio(path, self.fs)
         p_len = x.shape[0] // self.hop
         if f0_method == "pm":
             time_step = 160 / 16000 * 1000
