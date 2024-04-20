@@ -10,6 +10,7 @@ It is the best ( Not the fastest tho. ) extraction method for models that rely o
 - Changed the default hop_length for rmvpe to 64ms.
 - Envelopes for processed samples / segments to avoid zero-crossing ( waveform interruption ) clicks.
 - My own " Mel similarity metric " as a bonus. Helps in spotting overtraining / overfitting and mode collapses. Metric is being displayed in the console / log and is also logged in tensorboard files.
+- Sox is used for resampling ( vhq - Very High quality as default )
 
 .
 
