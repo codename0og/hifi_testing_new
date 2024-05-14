@@ -7,14 +7,13 @@
 
 - Mangio's crepe F0/Feature extraction method
 It is the best ( Not the fastest tho. ) extraction method for models that rely on clean ( No reverb, delay, harmonies, noise etc. ) or truly HQ datasets.
-- Adjustable hop_length for Mangio's crepe method ( Definitely the biggest perk of using Mangio's crepe. )
-- Changed the default hop_length for rmvpe to 64ms.
-- Envelopes for processed samples / segments to avoid zero-crossing ( waveform interruption ) clicks.
-- My own " Mel similarity metric " as a bonus. Helps in spotting overtraining / overfitting and mode collapses. Metric is being displayed in the console / log and is also logged in tensorboard files.
+- Adjustable hop_length for Mangio's crepe method ( More accurate f0 / feature extraction. Can capture more granual and subtle details )
+- Envelopes for processed samples / segments to avoid clicks resulting from slicer's ignorance of zero-crossing.
+- " Mel similarity metric ". A lil thingy I've made to help myself during my rvc-learning stage in spotting overtraining / overfitting and mode collapses. Metric is being displayed in the console / log and is also logged in tensorboard files.
 
-Explanation on what "hop length " is, for newbies and non audio-knowledgeable people:
+Explanation on what "hop length " is and what is it's purpose for mangio-crepe in rvc:
 
-Adjustable hop length is like choosing between seeing tiny details or getting a bigger picture in a photo.
+A custom hop length is like choosing between seeing tiny details or getting a bigger picture in a photo.
 Zooming In: Smaller hop lengths let you see small changes in sound, like zooming in for more detail in a picture. It's detailed but takes more time to process.
 Zooming Out: Larger hop lengths give a wider view of the sound, like stepping back from a picture. It's quicker for the computer but shows fewer small changes.
 It's about picking how closely you want to examine the sound: up close for more details (but slower) or from a distance to see more overall (but faster).
@@ -23,17 +22,15 @@ Adjusting this helps match what you need to know with how much time you have for
 
 | Inference related |
 
-- Automatic index file matching for models ( tho I can't seem to get it work on my end. It's perhaps either buggy or requires certain conditions ) 
+- Automatic index file matching for models.
 - Auto detection of audio files in " audios " folder + a dropdown to choose 'em. ( Much easier than having to copy/paste paths to your .wav or whatever all the time )
 - Changed default Feature index search ratio to '0.5'.
 - Mangio-crepe ( standard; " full " ) - Go to method.
-NOTES: Speed is definitely not it's strength ( like it's the case in RMVPE ) and it's also way way more sensitive to dirty audio, however if you provide it clean audio,
-magic happens. 
+NOTES: Speed is definitely not it's strength ( like it's the case in RMVPE ) and it's also way way more sensitive to dirty audio, however if you provide it clean audio, magic happens. 
 **( As always, for best possible results I recommend doing inferences on both RMVPE and Mangio-Crepe and just mixing the results during a song / cover mixing. )**
 
-
-- Mangio-crepe-tiny ( " lite " version of mangio-crepe; " tiny " ) - Better than pm, harvest, dio but most likely worse than crepe, mangio crepe and rmvpe.
-NOTE: Including it in case you wanna play around it.
+- Mangio-crepe-tiny ( " lite " version of mangio-crepe; " tiny " ) - Better than pm, harvest but worse than crepe, mangio crepe and most likely on par with rmvpe ( not as robust tho, that's for sure ).
+- FCPE - An f0 extraction method adapted from rvc's real-time-vc ( Borrowed from applio, re-tweaked for my fork. ) Speed comparable to RMVPE, Quality as well. FCPE is a context based extractor so, def works the best in real-time. Added it in cause why not.
 
 
 | ONNX Export related |
@@ -69,6 +66,8 @@ Cons:
 - It's way more sensitive than harvest or rmvpe; It can mistake the artifacts in audio ( such as post cleanup / post uvr: instrumental residues and such alike )
 - It's sound:noise detection capabilities are worse than RMVPE so, if there's too much of noise, humm etc., the extraction performance will suffer.
 - Quite heavy on gpu ( vRAM )
+- May cause memory leaks ( or so Mangio himself mentioned in his og repo. )
+- Sometimes the model's convergence ( during training ) might be slower or not as good as it is with rmvpe.
 
 -------------------------------------------------------------------------------------------------------------------------
 
@@ -83,12 +82,11 @@ Pros:
 ( same as Mangio's softness. It can be seen as a plus or minus, depending on a user and use-case. ) 
 
 Cons:
-- It is not as accurate / doesn't capture as much of details compared to mangio with hop.
-- It can make breathing and such "noise" type of sounds, harsh - perhaps shallow or glitchy / funky.
+- It can make breathing and such "noise" type of sounds, harsher - but it ain't a rule!.
 - Sometimes ( not always! ) rmvpe-trained models have a metalic overlay-tone to it and using rmvpe on such models, further enhances the effect.
+- I'd say, it's not as " soft " as crepe-based methods but you know. It's a matter of use-case. Sometimes you want that, sometimes not.
+- You can't adjust the hop length whatsoever. RMVPE has it set to 160 or so ~ 
 
-**Generally speaking, think of RMVPE as a method for dirty / difficult to handle / noise / instru-residues-contaminated audios,
-or if you care about speed and not accuracy / details as much ( tho it is not hell - heaven difference. For untrained ears? perhaps you won't notice )**
 
 -------------------------------------------------------------------------------------------------------------------------
 
@@ -96,7 +94,7 @@ or if you care about speed and not accuracy / details as much ( tho it is not he
 
 - Noticed that after you unload the model from inference the " protect voiceless consonants " value becomes null.
 FIX: After you unload the voice / model and then load any again, simply move the slider or input the default value: 0.33
-( Now I am not sure whether it always was like that in mangio or not, been ages. )
+( I've re-checked the code again during the big update and.. honestly? idk, code seems fine and handling too so idk why it happens lol. It's either something that's always been there and I didn't notice or mangio-style ui breaks somethin' I dunno. whatever. )
 
 - No other bugs or issues I've captured. In case you do and it's serious, write me a msg on discord.
 

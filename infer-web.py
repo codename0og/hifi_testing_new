@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 now_dir = os.getcwd()
 sys.path.append(now_dir)
 load_dotenv()
+load_dotenv("sha256.env")
 from infer.modules.vc.modules import VC
 from infer.lib.train.process_ckpt import (
     change_info,
@@ -12,10 +13,9 @@ from infer.lib.train.process_ckpt import (
     merge,
     show_info,
 )
-from i18n.i18n import I18nAuto
 from configs.config import Config
 from sklearn.cluster import MiniBatchKMeans
-import torch
+import torch, platform
 import re
 import numpy as np
 import gradio as gr
@@ -32,7 +32,7 @@ import threading
 import shutil
 import logging
 import signal
-# tweaked - Added: CSVutil
+
 from infer.lib.audio import load_audio
 
 logging.getLogger("numba").setLevel(logging.WARNING)
@@ -55,9 +55,19 @@ os.environ["TEMP"] = tmp
 warnings.filterwarnings("ignore")
 torch.manual_seed(114514)
 
+
 config = Config()
 vc = VC(config)
 
+if not config.nocheck:
+    from infer.lib.rvcmd import check_all_assets, download_all_assets
+
+    if not check_all_assets(update=config.update):
+        if config.update:
+            download_all_assets(tmpdir=tmp)
+            if not check_all_assets(update=config.update):
+                logging.error("counld not satisfy all assets needed.")
+                exit(1)
 
 if config.dml == True:
 
@@ -67,8 +77,6 @@ if config.dml == True:
         return res
 
     fairseq.modules.grad_multiply.GradMultiply.forward = forward_dml
-i18n = I18nAuto()
-logger.info(i18n)
 # 判断是否有能用来训练和加速推理的N卡
 ngpu = torch.cuda.device_count()
 gpu_infos = []
@@ -120,7 +128,7 @@ if if_gpu_ok and len(gpu_infos) > 0:
     gpu_info = "\n".join(gpu_infos)
     default_batch_size = min(mem) // 2
 else:
-    gpu_info = i18n("很遗憾您这没有能用的显卡来支持您训练")
+    gpu_info = "Unfortunately, your gpu's not supported for training models."
     default_batch_size = 1
 gpus = "-".join([i[0] for i in gpu_infos])
 
@@ -134,7 +142,6 @@ class ToolButton(gr.Button, gr.components.FormComponent):
     def get_block_name(self):
         return "button"
 
-
 weight_root = os.getenv("weight_root")
 index_root = os.getenv("index_root")
 outside_index_root = os.getenv("outside_index_root")
@@ -144,15 +151,9 @@ names = []
 for name in os.listdir(weight_root):
     if name.endswith(".pth"):
         names.append(name)
-
-
-
-
-
-
 index_paths = []
 
-# TESTING
+
 def lookup_indices(index_root):
     global index_paths
     for root, dirs, files in os.walk(index_root, topdown=False):
@@ -208,6 +209,7 @@ def get_indexes():
     else:
         return ''
 
+
 def change_choices():
     # Initialize lists to store file names and paths
     names = []
@@ -219,7 +221,7 @@ def change_choices():
     for name in os.listdir(weight_root):
         if name.endswith(".pth"):
             names.append(name)
-            
+
 
     # Populate 'index_paths' list with .index files in 'index_root'
     for root, dirs, files in os.walk(index_root, topdown=False):
@@ -243,9 +245,9 @@ def change_choices():
 def clean():
     return {"value": "", "__type__": "update"}
 
-
 def export_onnx(ModelPath, ExportedPath):
     from infer.modules.onnx.export import export_onnx as eo
+
     eo(ModelPath, ExportedPath)
 
 
@@ -328,7 +330,8 @@ def extract_f0_feature(gpus, n_p, f0method, if_f0, exp_dir, version19, gpus_rmvp
     if if_f0:
         if f0method != "rmvpe_gpu":
             cmd = (
-                '"%s" infer/modules/train/extract/extract_f0_print.py "%s/logs/%s" %s %s %s' % (
+                '"%s" infer/modules/train/extract/extract_f0_print.py "%s/logs/%s" %s %s %s'
+                % (
                     config.python_cmd,
                     now_dir,
                     exp_dir,
@@ -469,14 +472,14 @@ def get_pretrained_models(path_str, f0_str, sr2):
     )
     if not if_pretrained_generator_exist:
         logger.warning(
-            "assets/pretrained%s/%sG%s.pth doesn't exist, will not use pretrained model",
+            "assets/pretrained%s/%sG%s.pth doesn't exist. RVC won't use pretrained model",
             path_str,
             f0_str,
             sr2,
         )
     if not if_pretrained_discriminator_exist:
         logger.warning(
-            "assets/pretrained%s/%sD%s.pth doesn't exist, will not use pretrained model",
+            "assets/pretrained%s/%sD%s.pth doesn't exist. RVC won't use pretrained model",
             path_str,
             f0_str,
             sr2,
@@ -506,9 +509,9 @@ def change_version19(sr2, if_f0_3, version19):
     if sr2 == "32k" and version19 == "v1":
         sr2 = "40k"
     to_return_sr2 = (
-        {"choices": ["40k", "48k"], "__type__": "update", "value": sr2}
+        {"choices": ["32k", "40k", "48k"], "__type__": "update", "value": sr2}
         if version19 == "v1"
-        else {"choices": ["40k", "48k", "32k"], "__type__": "update", "value": sr2}
+        else {"choices": ["32k", "40k", "48k"], "__type__": "update", "value": sr2}
     )
     f0_str = "f0" if if_f0_3 else ""
     return (
@@ -517,6 +520,18 @@ def change_version19(sr2, if_f0_3, version19):
     )
 
 
+
+    # Previous 'change_f0' handling mechanism   -   INCOMPATIBLE
+#def change_f0(if_f0_3, sr2, version19):  # f0method8,pretrained_G14,pretrained_D15
+#    path_str = "" if version19 == "v1" else "_v2"
+#    return (
+#        {"visible": if_f0_3, "__type__": "update"},
+#        {"visible": if_f0_3, "__type__": "update"},
+#        *get_pretrained_models(path_str, "f0" if if_f0_3 == True else "", sr2),
+#    )
+
+
+    # " adapted " old 'if_f0_3' switch mechanism - idk man, tired of this shit, lmao. can't fix it so imma disable the box duh.
 def change_f0(
     if_f0_3,
     sr2,
@@ -527,12 +542,58 @@ def change_f0(
     extraction_crepe_hop_length,
     but2,
     info2,
-):
+):  # f0method8,pretrained_G14,pretrained_D15
     path_str = "" if version19 == "v1" else "_v2"
+    if_pretrained_generator_exist = os.access(
+        "assets/pretrained%s/f0G%s.pth" % (path_str, sr2), os.F_OK
+    )
+    if_pretrained_discriminator_exist = os.access(
+        "assets/pretrained%s/f0D%s.pth" % (path_str, sr2), os.F_OK
+    )
+    if not if_pretrained_generator_exist:
+        print(
+            "assets/pretrained%s/f0G%s.pth" % (path_str, sr2),
+            "not exist, will not use pretrained model",
+        )
+    if not if_pretrained_discriminator_exist:
+        print(
+            "assets/pretrained%s/f0D%s.pth" % (path_str, sr2),
+            "not exist, will not use pretrained model",
+        )
+
+    if if_f0_3:
+        return (
+            {"visible": True, "__type__": "update"},
+            "assets/pretrained%s/f0G%s.pth" % (path_str, sr2)
+            if if_pretrained_generator_exist
+            else "",
+            "assets/pretrained%s/f0D%s.pth" % (path_str, sr2)
+            if if_pretrained_discriminator_exist
+            else "",
+            {"visible": True, "__type__": "update"},
+            {"visible": True, "__type__": "update"},
+            {"visible": True, "__type__": "update"},
+            {"visible": True, "__type__": "update"},
+            {"visible": True, "__type__": "update"},
+            {"visible": True, "__type__": "update"},
+            {"visible": True, "__type__": "update"},
+        )
+
     return (
-        {"visible": if_f0_3, "__type__": "update"},
-        {"visible": if_f0_3, "__type__": "update"},
-        *get_pretrained_models(path_str, "f0" if if_f0_3 == True else "", sr2),
+        {"visible": False, "__type__": "update"},
+        ("assets/pretrained%s/G%s.pth" % (path_str, sr2))
+        if if_pretrained_generator_exist
+        else "",
+        ("assets/pretrained%s/D%s.pth" % (path_str, sr2))
+        if if_pretrained_discriminator_exist
+        else "",
+        {"visible": False, "__type__": "update"},
+        {"visible": False, "__type__": "update"},
+        {"visible": False, "__type__": "update"},
+        {"visible": False, "__type__": "update"},
+        {"visible": False, "__type__": "update"},
+        {"visible": False, "__type__": "update"},
+        {"visible": False, "__type__": "update"},
     )
 
 
@@ -656,9 +717,9 @@ def click_train(
                 save_epoch10,
                 "-pg %s" % pretrained_G14 if pretrained_G14 != "" else "",
                 "-pd %s" % pretrained_D15 if pretrained_D15 != "" else "",
-                1 if if_save_latest13 == i18n("是") else 0,
-                1 if if_cache_gpu17 == i18n("是") else 0,
-                1 if if_save_every_weights18 == i18n("是") else 0,
+                1 if if_save_latest13 == "Yes" else 0,
+                1 if if_cache_gpu17 == "Yes" else 0,
+                1 if if_save_every_weights18 == "Yes" else 0,
                 version19,
             )
         )
@@ -675,16 +736,16 @@ def click_train(
                 save_epoch10,
                 "-pg %s" % pretrained_G14 if pretrained_G14 != "" else "",
                 "-pd %s" % pretrained_D15 if pretrained_D15 != "" else "",
-                1 if if_save_latest13 == i18n("是") else 0,
-                1 if if_cache_gpu17 == i18n("是") else 0,
-                1 if if_save_every_weights18 == i18n("是") else 0,
+                1 if if_save_latest13 == "Yes" else 0,
+                1 if if_cache_gpu17 == "Yes" else 0,
+                1 if if_save_every_weights18 == "Yes" else 0,
                 version19,
             )
         )
     logger.info("Execute: " + cmd)
     p = Popen(cmd, shell=True, cwd=now_dir)
     p.wait()
-    return "训练结束, 您可查看控制台训练日志或实验文件夹下的train.log"
+    return "At the end of the training, you can view the training log in the console or check the train.log in the experiment ( model's ) folder."
 
 
 # but4.click(train_index, [exp_dir1], info3)
@@ -748,7 +809,6 @@ def train_index(exp_dir1, version19):
         "%s/trained_IVF%s_Flat_nprobe_%s_%s_%s.index"
         % (exp_dir, n_ivf, index_ivf.nprobe, exp_dir1, version19),
     )
-
     infos.append("adding")
     yield "\n".join(infos)
     batch_size_add = 8192
@@ -760,7 +820,7 @@ def train_index(exp_dir1, version19):
         % (exp_dir, n_ivf, index_ivf.nprobe, exp_dir1, version19),
     )
     infos.append(
-        "Successful Index Construction，added_IVF%s_Flat_nprobe_%s_%s_%s.index"
+        "Features Index has been created，added_IVF%s_Flat_nprobe_%s_%s_%s.index"
         % (n_ivf, index_ivf.nprobe, exp_dir1, version19)
     )
     try:
@@ -816,11 +876,11 @@ def train1key(
         return "\n".join(infos)
 
     # step1:处理数据
-    yield get_info_str(i18n("step1:正在处理数据"))
+    yield get_info_str("step1: Your dataset's being processed..")
     [get_info_str(_) for _ in preprocess_dataset(trainset_dir4, exp_dir1, sr2, np7)]
 
     # step2a:提取音高
-    yield get_info_str(i18n("step2:正在提取音高&正在提取特征"))
+    yield get_info_str("step2: The Pitch & feature extraction is in progress..")
     [
         get_info_str(_)
         for _ in extract_f0_feature(
@@ -829,7 +889,7 @@ def train1key(
     ]
 
     # step3a:训练模型
-    yield get_info_str(i18n("step3a:正在训练模型"))
+    yield get_info_str("step3a: The model's being trained..")
     click_train(
         exp_dir1,
         sr2,
@@ -847,13 +907,12 @@ def train1key(
         version19,
     )
     yield get_info_str(
-        i18n("训练结束, 您可查看控制台训练日志或实验文件夹下的train.log")
+        "At the end of the training, you can view the training log in the console or check the train.log in the experiment ( model's ) folder."
     )
 
     # step3b:训练索引
     [get_info_str(_) for _ in train_index(exp_dir1, version19)]
-    yield get_info_str(i18n("全流程结束！"))
-
+    yield get_info_str("Finished!")
 
 
 #                    ckpt_path2.change(change_info_,[ckpt_path2],[sr__,if_f0__])
@@ -872,13 +931,23 @@ def change_info_(ckpt_path):
         traceback.print_exc()
         return {"__type__": "update"}, {"__type__": "update"}, {"__type__": "update"}
 
+    # previous "config.dml" ( --dml arg ) based approach.
+#F0GPUVisible = config.dml == False
 
-F0GPUVisible = config.dml == False
+#def change_f0_method(f0method8):
+#    if f0method8 == "rmvpe_gpu":
+#        visible = F0GPUVisible
+#    else:
+#        visible = False
+#    return {"visible": visible, "__type__": "update"}
 
 
+    # no-dml-trigger
 def change_f0_method(f0method8):
-    if f0method8 == "rmvpe_gpu":
-        visible = F0GPUVisible
+    if f0method8 == "rmvpe":
+        visible = False
+    elif f0method8 == "rmvpe_gpu":
+        visible = True
     else:
         visible = False
     return {"visible": visible, "__type__": "update"}
@@ -951,9 +1020,8 @@ def whethercrepeornah(radio):
 with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
     gr.HTML("<h1> Codename-RVC-Fork 🍇 </h1>")
     gr.Markdown(
-        value=i18n(
+        value=
             "This software is open source under the MIT license. The author does not have any control over the software. Those who use the software and disseminate the sounds exported by the software are fully responsible. <br>If you do not agree with this clause, you cannot use or quote any code and files in the software package. See root directory <b>LICENSE</b> for details."
-        )
     )
     with gr.Tabs():
 
@@ -961,7 +1029,7 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
             with gr.Row():
                 sid0 = gr.Dropdown(label="Choose your (.pth) model for inference", choices=sorted(names), value="")
                 refresh_button = gr.Button(
-                    i18n("Refresh models list, index path and audio files"),
+                    "Refresh models list, index path and audio files",
                     variant="primary",
                 )
                 clean_button = gr.Button("Unload the model from GPU / RAM memory:", variant="primary")
@@ -999,15 +1067,15 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
                         )
                         input_audio1.change(fn=lambda:'',inputs=[],outputs=[input_audio0])
                         f0method0 = gr.Radio(
-                            label="Pick the pitch / f0 extraction algorithm. More detailed info on these in 'Code's 101' tab.",
+                            label="Pick the pitch / f0 extraction algorithm. More detailed info on these in 'Code's 101' tab. ( tl;dr? mangio-crepe, rmvpe and fcpe are your best picks.",
                             choices=[
                                 "pm",
                                 "harvest",
-                                # "dio",
                                 "crepe",
                                 "mangio-crepe",
                                 "mangio-crepe-tiny",
                                 "rmvpe",
+                                "fcpe",
                             ],
                             value="rmvpe",
                             interactive=True,
@@ -1016,7 +1084,7 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
                             minimum=1,
                             maximum=512,
                             step=1,
-                            label=i18n("crepe_hop_length"),
+                            label="crepe_hop_length",
                             value=128,
                             interactive=True,
                             visible=False,
@@ -1037,7 +1105,7 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
                         )
                     with gr.Column():
                         file_index1 = gr.Textbox(
-                            label=i18n("特征检索库文件路径,为空则使用下拉的选择结果"),
+                            label="Path to the feature index file. Leave blank to use the selected result from the dropdown:",
                             value="",
                             interactive=True,
                         )
@@ -1053,8 +1121,9 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
                             inputs=[],
                             outputs=[sid0, file_index2, input_audio1],
                         )
+                                    # Kept for the legacy's sake or if one wants to tinker with it.
                         # file_big_npy1 = gr.Textbox(
-                        #     label=i18n("特征文件路径"),
+                        #     label="F0 curve file (optional). One pitch per line. Replaces the default F0 and pitch modulation:",
                         #     value="E:\\codes\py39\\vits_vc_gpu_train\\logs\\mi-test-1key\\total_fea.npy",
                         #     interactive=True,
                         # )
@@ -1085,16 +1154,16 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
                         protect0 = gr.Slider(
                             minimum=0,
                             maximum=0.5,
-                            label="Protect unvoiced consonants and breath sounds to prevent artifacts. 0.5 = Max protection. 0 = No protection. ( High protection may reduce the accuracy of index )",
+                            label="Protect unvoiced consonants and breath sounds to avoid 'em artifacting. 0.5 = Max protection. 0 = No protection. ( High protection may reduce the accuracy of index ) Default is '0.33'",
                             value=0.33,
                             step=0.01,
                             interactive=True,
                         )
-                    f0_file = gr.File(label=i18n("F0曲线文件, 可选, 一行一个音高, 代替默认F0及升降调"))
+                    f0_file = gr.File(label="F0 curve file (optional). One pitch per line. Replaces the default F0 and pitch modulation:")
                     but0 = gr.Button("Inference", variant="primary")
                     with gr.Row():
-                        vc_output1 = gr.Textbox(label=i18n("输出信息"))
-                        vc_output2 = gr.Audio(label=i18n("输出音频(右下角三个点,点了可以下载)"))
+                        vc_output1 = gr.Textbox(label="Output information")
+                        vc_output2 = gr.Audio(label="Export audio (click on the three dots in the lower right corner to download)")
                     but0.click(
                         vc.vc_single,
                         [
@@ -1120,13 +1189,11 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
                 with gr.Row(visible=False):
                     with gr.Column(visible=False):
                         vc_transform1 = gr.Number(
-                            label=i18n("变调(整数, 半音数量, 升八度12降八度-12)"), value=0, visible=False
+                            label="Transpose ( Number of semitones, integers. )", value=0, visible=False
                         )
-                        opt_input = gr.Textbox(label=i18n("指定输出文件夹"), value="opt", visible=False)
+                        opt_input = gr.Textbox(label="Specify the output folder", value="opt", visible=False)
                         f0method1 = gr.Radio(
-                            label=i18n(
-                                "选择音高提取算法,输入歌声可用pm提速,harvest低音好但巨慢无比,crepe效果好但吃GPU"
-                            ),
+                            label="Select pitch f0 extraction algorithm.",
                             choices=["pm", "harvest", "crepe", "rmvpe"],
                             value="rmvpe",
                             interactive=False,
@@ -1144,13 +1211,13 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
                         )
                     with gr.Column(visible=False):
                         file_index3 = gr.Textbox(
-                            label=i18n("特征检索库文件路径,为空则使用下拉的选择结果"),
+                            label="Path to the feature index file. Leave blank to use the selected result from the dropdown:",
                             value="",
                             interactive=False,
                             visible=False,
                         )
                         file_index4 = gr.Dropdown(
-                            label=i18n("自动检测index路径,下拉式选择(dropdown)"),
+                            label="Auto-detect index path ( Dropdown )",
                             choices=get_indexes(),
                             value=get_index(),
                             interactive=False,
@@ -1163,15 +1230,10 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
                             outputs=file_index4,
                             api_name="infer_refresh_batch",
                         )
-                        # file_big_npy2 = gr.Textbox(
-                        #     label=i18n("特征文件路径"),
-                        #     value="E:\\codes\\py39\\vits_vc_gpu_train\\logs\\mi-test-1key\\total_fea.npy",
-                        #     interactive=True,
-                        # )
                         index_rate2 = gr.Slider(
                             minimum=0,
                             maximum=1,
-                            label=i18n("检索特征占比"),
+                            label="Feature Index search ratio. Controls accent and pronunciation strength. If the model was trained on small dataset, setting it too high can result in artifacts. Recommended: 0.3, 0.5, 0,75 ( Setting it to 0 turns off the index. Model will take all it can from the input audio",
                             value=1,
                             interactive=False,
                             visible=False,
@@ -1189,7 +1251,7 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
                         rms_mix_rate1 = gr.Slider(
                             minimum=0,
                             maximum=1,
-                            label=i18n("输入源音量包络替换输出音量包络融合比例，越靠近1越使用输出包络"),
+                            label="Volume envelope scaling (RMS). Think of it as peak-compression+norm. Don't touch unless you know what you're doing.",
                             value=1,
                             interactive=False,
                             visible=False,
@@ -1197,7 +1259,7 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
                         protect1 = gr.Slider(
                             minimum=0,
                             maximum=0.5,
-                            label="Protect unvoiced consonants and breath sounds to prevent artifacts. 0.5 = Max protection. 0 = No protection. ( High protection may reduce the accuracy of index )",
+                            label="Protect unvoiced consonants and breath sounds to prevent artifacts. 0.5 = Max protection. 0 = No protection. ( High protection may reduce the accuracy of index ) ps. When you 'unload the model', it will become blank ( kinda a bug I can't fix ), in that case move the slider or input the default '0.33'",
                             value=0.33,
                             step=0.01,
                             interactive=False,
@@ -1210,11 +1272,11 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
                             visible=False,
                         )
                         inputs = gr.File(
-                            file_count="multiple", label=i18n("也可批量输入音频文件, 二选一, 优先读文件夹"), visible=False
+                            file_count="multiple", label="Audio files can also be imported in batch, with one of two options, prioritizing folders for reading.", visible=False
                         )
                     with gr.Row(visible=False):
                         format1 = gr.Radio(
-                            label=i18n("导出文件格式"),
+                            label="Format for the exported file",
                             choices=["wav", "flac", "mp3", "m4a"],
                             value="flac",
                             interactive=False,
@@ -1252,63 +1314,59 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
                     inputs=[sid0, protect0, protect1],
                     outputs=[spk_item, protect0, protect1, file_index2, file_index4],
                     api_name="infer_change_voice",
-                )  
-        with gr.TabItem(i18n("训练")):
-            gr.Markdown(
-                value=i18n(
-                    "step1: 填写实验配置. 实验数据放在logs下, 每个实验一个文件夹, 需手工输入实验名路径, 内含实验配置, 日志, 训练得到的模型文件. "
                 )
+        with gr.TabItem("Training"):
+            gr.Markdown(
+                value="step1: Step 1: Model / Experiment configuration. Model's training files and generally data is stored in 'logs' folder, i.e. 'logs/MyPogModel123 ( Each model has their own folder in logs. ) "
             )
             with gr.Row():
-                exp_dir1 = gr.Textbox(label=i18n("输入实验名"), value="InsertYourModelName")
+                exp_dir1 = gr.Textbox(label="Model ( experiment ) name:", value="MyPogModel123")
                 sr2 = gr.Radio(
-                    label=i18n("目标采样率"),
+                    label="Model sample rate",
                     choices=["40k", "48k"],
                     value="40k",
                     interactive=True,
                 )
                 if_f0_3 = gr.Radio(
-                    label=i18n("模型是否带音高指导(唱歌一定要, 语音可以不要)"),
+                    label="Pitch f0 guidance. ( Required for singing-purpose model, not required for speech only. ps. Leave it on for multi-purpose model. ) ",
                     choices=[True, False],
                     value=True,
                     interactive=False,
                     visible=False,
                 )
                 version19 = gr.Radio(
-                    label=i18n("版本"),
+                    label="Model version",
                     choices=["v1", "v2"],
                     value="v2",
                     interactive=True,
-                    visible=True,
+                    #visible=True,
                 )
                 np7 = gr.Slider(
                     minimum=0,
                     maximum=config.n_cpu,
                     step=1,
-                    label=i18n("提取音高和处理数据使用的CPU进程数"),
+                    label="Number of CPU cores used used for pitch extraction and dataset processing.",
                     value=int(np.ceil(config.n_cpu / 1.5)),
                     interactive=True,
                 )
             with gr.Group():  # 暂时单人的, 后面支持最多4人的#数据处理
                 gr.Markdown(
-                    value=i18n(
-                        "step2a: 自动遍历训练文件夹下所有可解码成音频的文件并进行切片归一化, 在实验目录下生成2个wav文件夹; 暂时只支持单人训练. "
-                    )
+                    value="Step2a: 1. Creates your model's experiment folder, 2. Is segmenting and normalizing your dataset, 3. Processed samples end up in 2 folders located in your model's folder: 0_gt_wavs ( og. sample rate ) and '1_16k_wavs' ( downsampled to 16khz ). "
                 )
                 with gr.Row():
                     trainset_dir4 = gr.Textbox(
-                        label=i18n("输入训练文件夹路径"), value=os.path.abspath(os.getcwd()) + "\\dataset"
+                        label="Path to your dataset:", value=os.path.abspath(os.getcwd()) + "\\dataset"
                     )
                     spk_id5 = gr.Slider(
                         minimum=0,
                         maximum=4,
                         step=1,
-                        label=i18n("请指定说话人id"),
+                        label="Speaker/Singer ID:   Multi-speaker training is currently unsupported.",
                         value=0,
-                        interactive=True,
+                        interactive=False,
                     )
-                    but1 = gr.Button(i18n("处理数据"), variant="primary")
-                    info1 = gr.Textbox(label=i18n("输出信息"), value="")
+                    but1 = gr.Button("Dataset processing", variant="primary")
+                    info1 = gr.Textbox(label="Output information", value="")
                     but1.click(
                         preprocess_dataset,
                         [trainset_dir4, exp_dir1, sr2, np7],
@@ -1316,24 +1374,22 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
                         api_name="train_preprocess",
                     )
             with gr.Group():
-                step2b = gr.Markdown(value=i18n("step2b: 使用CPU提取音高(如果模型带音高), 使用GPU提取特征(选择卡号)"))
+                step2b = gr.Markdown(value="Step2b: Uses CPU to extract pitch ( If pitch f0 guidance is enabled), Uses GPU to extract features.")
                 with gr.Row():
                     with gr.Column():
                         gpus6 = gr.Textbox(
-                            label=i18n("以-分隔输入使用的卡号, 例如   0-1-2   使用卡0和卡1和卡2"),
+                            label="If you wanna use more than 1 gpu, input their IDs separated with '-'. i.e.: '0-1-2' will use gpus: 0, 1 and 2.",
                             value=gpus,
                             interactive=True,
-                            visible=F0GPUVisible,
+                            visible=True,
                         )
                         gpu_info9 = gr.Textbox(
-                            label=i18n("显卡信息"), value=gpu_info, visible=F0GPUVisible
+                            label="GPU_Info", value=gpu_info, visible=True
                         )
                     with gr.Column():
                         f0method8 = gr.Radio(
-                            label=i18n(
-                                "选择音高提取算法:输入歌声可用pm提速,高质量语音但CPU差可用dio提速,harvest质量更好但慢,rmvpe效果最好且微吃CPU/GPU"
-                            ),
-                            choices=["pm", "harvest", "dio", "mangio-crepe", "rmvpe", "rmvpe_gpu"],
+                            label="General info; Crepe and mangio-crepe are similar, just the former allows for the change of 'hop_length' - can extract on cpu but it's EXTREMELY slow ( More about crepe in info tab ). Rmvpe and rmvpe_gpu are the same, just _gpu variant is gpu accelerated - _gpu variant is the fastest gpu method, provides HQ results, both of em. Harvest isn't the best and is not recommended. PM is kept for the sake of legacy - definitely not recommended. ",
+                            choices=["pm", "harvest", "crepe", "mangio-crepe", "rmvpe", "rmvpe_gpu"],
                             value="rmvpe",
                             interactive=True,
                         )
@@ -1342,7 +1398,7 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
                             minimum=1,
                             maximum=512,
                             step=1,
-                            label=i18n("crepe_hop_length"),
+                            label="crepe_hop_length",
                             value=64,
                             interactive=True,
                             visible=False,
@@ -1350,15 +1406,13 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
                         # Mangio element
                         f0method8.change(fn=whethercrepeornah, inputs=[f0method8], outputs=[extraction_crepe_hop_length])
                         gpus_rmvpe = gr.Textbox(
-                            label=i18n(
-                                "rmvpe卡号配置：以-分隔输入使用的不同进程卡号,例如0-0-1使用在卡0上跑2个进程并在卡1上跑1个进程"
-                            ),
+                            label="Wanna use more than 1 GPU for 'rmvpe_gpu'? Input their IDs and separate them with '-'. i.e.: '0-1-2' will use gpu 0, 1 and 2.",
                             value="%s-%s" % (gpus, gpus),
                             interactive=True,
-                            visible=F0GPUVisible,
+                            visible=False,
                         )
-                    but2 = gr.Button(i18n("特征提取"), variant="primary")
-                    info2 = gr.Textbox(label=i18n("输出信息"), value="", max_lines=8)
+                    but2 = gr.Button("Features extraction", variant="primary")
+                    info2 = gr.Textbox(label="Output information", value="", max_lines=8)
                     f0method8.change(
                         fn=change_f0_method,
                         inputs=[f0method8],
@@ -1380,21 +1434,21 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
                         api_name="train_extract_f0_feature",
                     )
             with gr.Group():
-                gr.Markdown(value=i18n("step3: 填写训练设置, 开始训练模型和索引"))
+                gr.Markdown(value="Step3: Fill in the training settings -> Train feature index -> Train model")
                 with gr.Row():
                     save_epoch10 = gr.Slider(
                         minimum=1,
                         maximum=100,
                         step=1,
-                        label=i18n("保存频率save_every_epoch"),
-                        value=3,
+                        label="Saving frequency for your model. ( i.e.: If you keep it at '2' you'll have ur model saved every 2nd epoch.)",
+                        value=1,
                         interactive=True,
                     )
                     total_epoch11 = gr.Slider(
                         minimum=1,
                         maximum=10000,
                         step=1,
-                        label=i18n("总训练轮数total_epoch"),
+                        label="Total amount of epochs / iterations.",
                         value=20,
                         interactive=True,
                     )
@@ -1402,39 +1456,37 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
                         minimum=1,
                         maximum=40,
                         step=1,
-                        label=i18n("每张显卡的batch_size"),
+                        label="Batch_size per GPU ( If your gpu's vram allows it, try: 8, 10, 12, 14, 16 or anything in-between. Those don't click for ur case or have a really small dataset? Perhaps try: 3, 4 or 6. )",
                         value=default_batch_size,
                         interactive=True,
                     )
                     if_save_latest13 = gr.Radio(
-                        label=i18n("是否仅保存最新的ckpt文件以节省硬盘空间"),
-                        choices=[i18n("是"), i18n("否")],
-                        value=i18n("是"),
+                        label="Wanna keep only most recent model's gen/disc files? ( Keep it as 'yes' or else rip your storage ~ aside, non-dev users don't need it. )",
+                        choices=["Yes", "No"],
+                        value="Yes",
                         interactive=True,
                     )
                     if_cache_gpu17 = gr.Radio(
-                        label=i18n(
-                            "是否缓存所有训练集至显存. 10min以下小数据可缓存以加速训练, 大数据缓存会炸显存也加不了多少速"
-                        ),
-                        choices=[i18n("是"), i18n("否")],
-                        value=i18n("否"),
+                        label="Do you wanna cache the datasetset to your gpu's vram?                           ( Tbf, I don't recommend it. Can cause vram issues for sets above 10 min, may cause instability and the speed boost might not even be that big. )",
+                        choices=["Yes", "No"],
+                        value="No",
                         interactive=True,
                     )
                     if_save_every_weights18 = gr.Radio(
-                        label=i18n("是否在每次保存时间点将最终小模型保存至weights文件夹"),
-                        choices=[i18n("是"), i18n("否")],
-                        value=i18n("是"),
+                        label="Do you wanna save your model at each save-point iteration? ( Good advice lol: Keep it as 'yes'. )",
+                        choices=["Yes", "No"],
+                        value="Yes",
                         interactive=True,
                     )
                 with gr.Row():
                     pretrained_G14 = gr.Textbox(
-                        label=i18n("加载预训练底模G路径"),
-                        value="assets/pretrained_v2/f0G40k.pth",
+                        label="Path to pretrained/base Generator",
+                        value="assets/pretrained_v2/f0G48k.pth",
                         interactive=True,
                     )
                     pretrained_D15 = gr.Textbox(
-                        label=i18n("加载预训练底模D路径"),
-                        value="assets/pretrained_v2/f0D40k.pth",
+                        label="Path to pretrained/base Disriminator",
+                        value="assets/pretrained_v2/f0D48k.pth",
                         interactive=True,
                     )
                     sr2.change(
@@ -1454,14 +1506,14 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
                     )
                     if_f0_3.change(fn=whethercrepeornah, inputs=[f0method8], outputs=[extraction_crepe_hop_length])
                     gpus16 = gr.Textbox(
-                        label=i18n("以-分隔输入使用的卡号, 例如   0-1-2   使用卡0和卡1和卡2"),
+                        label="If you wanna use more than 1 gpu, input their IDs separated with '-'. i.e.: '0-1-2' will use gpus: 0, 1 and 2.",
                         value=gpus,
                         interactive=True,
+                        visible=False,
                     )
-                    but3 = gr.Button(i18n("训练模型"), variant="primary")
-                    but4 = gr.Button(i18n("训练特征索引"), variant="primary")
-                    #but5 = gr.Button(i18n("一键训练"), variant="primary")
-                    info3 = gr.Textbox(label=i18n("输出信息"), value="", max_lines=10)
+                    but3 = gr.Button("Train model", variant="primary")
+                    but4 = gr.Button("Train feature index", variant="primary")
+                    info3 = gr.Textbox(label="Output information", value="", max_lines=10)
                     but3.click(
                         click_train,
                         [
@@ -1484,51 +1536,59 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
                         api_name="train_start",
                     )
                     but4.click(train_index, [exp_dir1, version19], info3)
-        with gr.TabItem(i18n("ckpt处理")):
+        with gr.TabItem("Model utils"):
             with gr.Group():
-                gr.Markdown(value=i18n("模型融合, 可用于测试音色融合"))
+                gr.Markdown(value="Models fusion ( Can be used to fuse best FM, MEL or just mix 2 unrelated models etc. )")
                 with gr.Row():
-                    ckpt_a = gr.Textbox(label=i18n("A模型路径"), value="", interactive=True, placeholder="Path to your model A.")
-                    ckpt_b = gr.Textbox(label=i18n("B模型路径"), value="", interactive=True, placeholder="Path to your model B.")
+                    ckpt_a = gr.Textbox(
+                        label="Path to model A", value="", interactive=True, placeholder="Path to ur model A."
+                    )
+                    ckpt_b = gr.Textbox(
+                        label="Path to model B", value="", interactive=True, placeholder="Path to ur model B."
+                    )
                     alpha_a = gr.Slider(
                         minimum=0,
                         maximum=1,
-                        label=i18n("A模型权重"),
+                        label="Weight / priority / influence of model A",
                         value=0.5,
                         interactive=True,
                     )
                 with gr.Row():
                     sr_ = gr.Radio(
-                        label=i18n("目标采样率"),
+                        label="Model's sample rate (Proper fusion for 32k isn't supported.)",
                         choices=["40k", "48k"],
-                        value="40k",
+                        value="48k",
                         interactive=True,
                     )
                     if_f0_ = gr.Radio(
-                        label=i18n("模型是否带音高指导"),
-                        choices=[i18n("是"), i18n("否")],
-                        value=i18n("是"),
+                        label="Does your model have f0 pitch guidance?",
+                        choices=["Yes", "No"],
+                        value="Yes",
                         interactive=True,
                     )
                     info__ = gr.Textbox(
-                        label=i18n("要置入的模型信息"), value="", max_lines=8, interactive=True
+                        label="Information to be added.",
+                        value="",
+                        placeholder="i.e.: A mix of models X1 and X2",
+                        max_lines=8,
+                        interactive=True,
                     )
                     name_to_save0 = gr.Textbox(
-                        label=i18n("保存的模型名不带后缀"),
+                        label="Name your fused / hybrid model. ( just name, don't add extension.)",
                         value="",
-                        placeholder="Name for saving.",
+                        placeholder="i.e.: model_X1_model_X2_50_50",
                         max_lines=1,
                         interactive=True,
                     )
                     version_2 = gr.Radio(
-                        label=i18n("模型版本型号"),
+                        label="Your model's version",
                         choices=["v1", "v2"],
                         value="v1",
                         interactive=True,
                     )
                 with gr.Row():
-                    but6 = gr.Button(i18n("融合"), variant="primary")
-                    info4 = gr.Textbox(label=i18n("输出信息"), value="", max_lines=8)
+                    but6 = gr.Button("Fuse", variant="primary")
+                    info4 = gr.Textbox(label="Output information", value="", max_lines=8)
                 but6.click(
                     merge,
                     [
@@ -1545,23 +1605,28 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
                     api_name="ckpt_merge",
                 )  # def merge(path1,path2,alpha1,sr,f0,info):
             with gr.Group():
-                gr.Markdown(value=i18n("修改模型信息(仅支持weights文件夹下提取的小模型文件)"))
+                gr.Markdown(
+                    value="Modify model's information. ( Supports only small weight models. Those 50 ish mb .pth models.)"
+                )
                 with gr.Row():
                     ckpt_path0 = gr.Textbox(
-                        label=i18n("模型路径"), value="", interactive=True
+                        label="Model path", value="", interactive=True
                     )
                     info_ = gr.Textbox(
-                        label=i18n("要改的模型信息"), value="", max_lines=8, interactive=True
+                        label="Model's information to be added / modified",
+                        value="",
+                        max_lines=8,
+                        interactive=True,
                     )
                     name_to_save1 = gr.Textbox(
-                        label=i18n("保存的文件名, 默认空为和源文件同名"),
+                        label="Name for the saved modified model. ( aka. Name your model. )",
                         value="",
                         max_lines=8,
                         interactive=True,
                     )
                 with gr.Row():
-                    but7 = gr.Button(i18n("修改"), variant="primary")
-                    info5 = gr.Textbox(label=i18n("输出信息"), value="", max_lines=8)
+                    but7 = gr.Button("Modify", variant="primary")
+                    info5 = gr.Textbox(label="Output information", value="", max_lines=8)
                 but7.click(
                     change_info,
                     [ckpt_path0, info_, name_to_save1],
@@ -1569,52 +1634,53 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
                     api_name="ckpt_modify",
                 )
             with gr.Group():
-                gr.Markdown(value=i18n("查看模型信息(仅支持weights文件夹下提取的小模型文件)"))
+                gr.Markdown(value="View model's information someone added in using above 'Information modifier'.")
                 with gr.Row():
                     ckpt_path1 = gr.Textbox(
-                        label=i18n("模型路径"), value="", interactive=True
+                        label="Model path", value="", interactive=True
                     )
-                    but8 = gr.Button(i18n("查看"), variant="primary")
-                    info6 = gr.Textbox(label=i18n("输出信息"), value="", max_lines=8)
+                    but8 = gr.Button("View", variant="primary")
+                    info6 = gr.Textbox(label="Output information", value="", max_lines=8)
                 but8.click(show_info, [ckpt_path1], info6, api_name="ckpt_show")
             with gr.Group():
                 gr.Markdown(
-                    value=i18n(
-                        "模型提取(输入logs文件夹下大文件模型路径),适用于训一半不想训了模型没有自动提取保存小文件模型,或者想测试中间模型的情况"
-                    )
+                    value="Can help if you only have your model's generator file ( Maybe you didn't set it to save weights / small models) and you want to extract a small model, so, a weight / ' epoch '. "
                 )
                 with gr.Row():
                     ckpt_path2 = gr.Textbox(
-                        label=i18n("模型路径"),
-                        value="E:\\codes\\py39\\logs\\mi-test_f0_48k\\G_23333.pth",
+                        label="Path to Model:",
+                        value="PATH\TO\MODEl'S\GENERATOR\G_23333.pth",
                         interactive=True,
                     )
                     save_name = gr.Textbox(
-                        label=i18n("保存名"), value="", interactive=True
+                        label="Save name", value="", interactive=True
                     )
                     sr__ = gr.Radio(
-                        label=i18n("目标采样率"),
+                        label="Sample rate for your model",
                         choices=["32k", "40k", "48k"],
-                        value="40k",
+                        value="48k",
                         interactive=True,
                     )
                     if_f0__ = gr.Radio(
-                        label=i18n("模型是否带音高指导,1是0否"),
+                        label="Want 'pitch guidance' for your model? 1 is yes, 0 is no.",
                         choices=["1", "0"],
                         value="1",
                         interactive=True,
                     )
                     version_1 = gr.Radio(
-                        label=i18n("模型版本型号"),
+                        label="Model version",
                         choices=["v1", "v2"],
                         value="v2",
                         interactive=True,
                     )
                     info___ = gr.Textbox(
-                        label=i18n("要置入的模型信息"), value="", max_lines=8, interactive=True
+                        label="Model information to be placed",
+                        value="",
+                        max_lines=8,
+                        interactive=True,
                     )
-                    but9 = gr.Button(i18n("提取"), variant="primary")
-                    info7 = gr.Textbox(label=i18n("输出信息"), value="", max_lines=8)
+                    but9 = gr.Button("Extract", variant="primary")
+                    info7 = gr.Textbox(label="Output information", value="", max_lines=8)
                     ckpt_path2.change(
                         change_info_, [ckpt_path2], [sr__, if_f0__, version_1]
                     )
@@ -1635,7 +1701,7 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
             with gr.Row():
                 infoOnnx = gr.Label(label="info")
             with gr.Row():
-                butOnnx = gr.Button(i18n("导出Onnx模型"), variant="primary")
+                butOnnx = gr.Button("Export as onnx model", variant="primary")
             butOnnx.click(
                 export_onnx, [ckpt_dir, onnx_dir], infoOnnx, api_name="export_onnx"
             )
@@ -1653,12 +1719,16 @@ with gr.Blocks(title=" Codename-RVC-Fork 🍇 ") as app:
             except:
                 gr.Markdown(traceback.format_exc())
 
-    if config.iscolab:
-        app.queue(concurrency_count=511, max_size=1022).launch(share=True)
-    else:
-        app.queue(concurrency_count=511, max_size=1022).launch(
-            server_name="0.0.0.0",
-            inbrowser=not config.noautoopen,
-            server_port=8000,
-            quiet=True,
-        )
+    try:
+        if config.iscolab:
+            app.queue(max_size=1022).launch(share=True, max_threads=511)
+        else:
+            app.queue(max_size=1022).launch(
+                max_threads=511,
+                server_name="0.0.0.0",
+                inbrowser=not config.noautoopen,
+                server_port=8000,
+                quiet=True,
+            )
+    except Exception as e:
+        logger.error(str(e))
