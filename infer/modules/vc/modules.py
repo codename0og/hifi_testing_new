@@ -156,7 +156,7 @@ class VC:
         resample_sr,
         rms_mix_rate,
         protect,
-        crepe_hop_length
+        adjustable_hop_length,
     ):
         if input_audio_path0 is None and input_audio_path1 is None:
             return "You need to upload an audio", None
@@ -206,7 +206,7 @@ class VC:
                 rms_mix_rate,
                 self.version,
                 protect,
-                crepe_hop_length,
+                adjustable_hop_length,
                 f0_file,
             )
             if self.tgt_sr != resample_sr >= 16000:
@@ -277,7 +277,7 @@ class VC:
                     resample_sr,
                     rms_mix_rate,
                     protect,
-                    crepe_hop_length
+                    adjustable_hop_length
                 )
                 if "Success" in info:
                     try:
